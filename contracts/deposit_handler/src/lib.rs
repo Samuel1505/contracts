@@ -136,7 +136,8 @@ impl DepositHandler {
     }
 
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
-        let admin: Address = env.storage().instance().get(&InstanceKey::Admin).unwrap();
+        let admin: Address = env.storage().instance().get(&InstanceKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
         env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
@@ -342,7 +343,8 @@ impl DepositHandler {
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
 fn require_order_keeper(env: &Env, caller: &Address) {
-    let role_store: Address = env.storage().instance().get(&InstanceKey::RoleStore).unwrap();
+    let role_store: Address = env.storage().instance().get(&InstanceKey::RoleStore)
+        .unwrap_or_else(|| panic_with_error!(env, Error::NotInitialized));
     if !RoleStoreClient::new(env, &role_store).has_role(caller, &roles::order_keeper(env)) {
         panic_with_error!(env, Error::Unauthorized);
     }
@@ -352,9 +354,12 @@ fn load_market_props(env: &Env, data_store: &Address, market_token: &Address) ->
     let ds = DataStoreClient::new(env, data_store);
     MarketProps {
         market_token: market_token.clone(),
-        index_token:  ds.get_address(&market_index_token_key(env, market_token)).unwrap(),
-        long_token:   ds.get_address(&market_long_token_key(env, market_token)).unwrap(),
-        short_token:  ds.get_address(&market_short_token_key(env, market_token)).unwrap(),
+        index_token:  ds.get_address(&market_index_token_key(env, market_token))
+            .expect("market index token not found"),
+        long_token:   ds.get_address(&market_long_token_key(env, market_token))
+            .expect("market long token not found"),
+        short_token:  ds.get_address(&market_short_token_key(env, market_token))
+            .expect("market short token not found"),
     }
 }
 

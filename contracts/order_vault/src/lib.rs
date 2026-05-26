@@ -46,7 +46,8 @@ trait IRoleStore {
 }
 
 fn require_controller(env: &Env, caller: &Address) {
-    let rs: Address = env.storage().instance().get(&InstanceKey::RoleStore).unwrap();
+    let rs: Address = env.storage().instance().get(&InstanceKey::RoleStore)
+        .unwrap_or_else(|| panic_with_error!(env, Error::NotInitialized));
     if !RoleStoreClient::new(env, &rs).has_role(caller, &roles::controller(env)) {
         panic_with_error!(env, Error::Unauthorized);
     }

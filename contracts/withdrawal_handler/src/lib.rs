@@ -38,11 +38,12 @@ use gmx_market_utils::{
 #[repr(u32)]
 pub enum Error {
     AlreadyInitialized   = 1,
-    Unauthorized         = 2,
-    WithdrawalNotFound   = 3,
-    InsufficientLongOut  = 4,
-    InsufficientShortOut = 5,
-    ZeroWithdrawal       = 6,
+    NotInitialized       = 2,
+    Unauthorized         = 3,
+    WithdrawalNotFound   = 4,
+    InsufficientLongOut  = 5,
+    InsufficientShortOut = 6,
+    ZeroWithdrawal       = 7,
 }
 
 // ─── Storage ──────────────────────────────────────────────────────────────────
@@ -184,9 +185,12 @@ impl WithdrawalHandler {
         keeper.require_auth();
         require_order_keeper(&env, &keeper);
 
-        let data_store: Address = env.storage().instance().get(&InstanceKey::DataStore).unwrap();
-        let withdrawal_vault: Address = env.storage().instance().get(&InstanceKey::WithdrawalVault).unwrap();
-        let oracle: Address = env.storage().instance().get(&InstanceKey::Oracle).unwrap();
+        let data_store: Address = env.storage().instance().get(&InstanceKey::DataStore)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        let withdrawal_vault: Address = env.storage().instance().get(&InstanceKey::WithdrawalVault)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        let oracle: Address = env.storage().instance().get(&InstanceKey::Oracle)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         let handler = env.current_contract_address();
 
         let withdrawal: WithdrawalProps = env.storage().persistent()
@@ -253,9 +257,12 @@ impl WithdrawalHandler {
     pub fn cancel_withdrawal(env: Env, caller: Address, key: BytesN<32>) {
         caller.require_auth();
 
-        let data_store: Address = env.storage().instance().get(&InstanceKey::DataStore).unwrap();
-        let withdrawal_vault: Address = env.storage().instance().get(&InstanceKey::WithdrawalVault).unwrap();
-        let role_store: Address = env.storage().instance().get(&InstanceKey::RoleStore).unwrap();
+        let data_store: Address = env.storage().instance().get(&InstanceKey::DataStore)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        let withdrawal_vault: Address = env.storage().instance().get(&InstanceKey::WithdrawalVault)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        let role_store: Address = env.storage().instance().get(&InstanceKey::RoleStore)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         let handler = env.current_contract_address();
 
         let withdrawal: WithdrawalProps = env.storage().persistent()
@@ -287,7 +294,8 @@ impl WithdrawalHandler {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 fn require_order_keeper(env: &Env, caller: &Address) {
-    let role_store: Address = env.storage().instance().get(&InstanceKey::RoleStore).unwrap();
+    let role_store: Address = env.storage().instance().get(&InstanceKey::RoleStore)
+        .unwrap_or_else(|| panic_with_error!(env, Error::NotInitialized));
     if !RoleStoreClient::new(env, &role_store).has_role(caller, &roles::order_keeper(env)) {
         panic_with_error!(env, Error::Unauthorized);
     }
@@ -297,9 +305,12 @@ fn load_market_props(env: &Env, data_store: &Address, market_token: &Address) ->
     let ds = DataStoreClient::new(env, data_store);
     MarketProps {
         market_token: market_token.clone(),
-        index_token:  ds.get_address(&market_index_token_key(env, market_token)).unwrap(),
-        long_token:   ds.get_address(&market_long_token_key(env, market_token)).unwrap(),
-        short_token:  ds.get_address(&market_short_token_key(env, market_token)).unwrap(),
+        index_token:  ds.get_address(&market_index_token_key(env, market_token))
+            .expect("market index token not found"),
+        long_token:   ds.get_address(&market_long_token_key(env, market_token))
+            .expect("market long token not found"),
+        short_token:  ds.get_address(&market_short_token_key(env, market_token))
+            .expect("market short token not found"),
     }
 }
 

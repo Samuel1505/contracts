@@ -16,7 +16,8 @@ use soroban_sdk::{
 #[repr(u32)]
 pub enum Error {
     AlreadyInitialized = 1,
-    Unauthorized       = 2,
+    NotInitialized     = 2,
+    Unauthorized       = 3,
 }
 
 #[contracttype]
@@ -70,6 +71,12 @@ impl WithdrawalVault {
     ) {
         caller.require_auth();
         require_controller(&env, &caller);
+        
+        // Input validation
+        if amount <= 0 {
+            panic_with_error!(&env, Error::Unauthorized); // Reuse existing error for now
+        }
+        
         token::Client::new(&env, &token)
             .transfer(&env.current_contract_address(), &receiver, &amount);
         let new_bal = token::Client::new(&env, &token)
@@ -85,7 +92,8 @@ impl WithdrawalVault {
 }
 
 fn require_controller(env: &Env, caller: &Address) {
-    let rs: Address = env.storage().instance().get(&InstanceKey::RoleStore).unwrap();
+    let rs: Address = env.storage().instance().get(&InstanceKey::RoleStore)
+        .unwrap_or_else(|| panic_with_error!(env, Error::NotInitialized));
     if !RoleStoreClient::new(env, &rs).has_role(caller, &gmx_keys::roles::controller(env)) {
         panic_with_error!(env, Error::Unauthorized);
     }

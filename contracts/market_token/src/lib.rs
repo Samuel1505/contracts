@@ -18,11 +18,12 @@ use gmx_keys::roles;
 #[repr(u32)]
 pub enum Error {
     AlreadyInitialized = 1,
-    Unauthorized       = 2,
-    InsufficientBalance = 3,
-    InsufficientAllowance = 4,
-    NegativeAmount     = 5,
-    AllowanceExpired   = 6,
+    NotInitialized     = 2,
+    Unauthorized       = 3,
+    InsufficientBalance = 4,
+    InsufficientAllowance = 5,
+    NegativeAmount     = 6,
+    AllowanceExpired   = 7,
 }
 
 // ─── Storage keys ─────────────────────────────────────────────────────────────
@@ -91,15 +92,18 @@ impl MarketToken {
     // ── SEP-41 metadata ───────────────────────────────────────────────────────
 
     pub fn decimals(env: Env) -> u32 {
-        env.storage().instance().get(&InstanceKey::Decimals).unwrap()
+        env.storage().instance().get(&InstanceKey::Decimals)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized))
     }
 
     pub fn name(env: Env) -> String {
-        env.storage().instance().get(&InstanceKey::Name).unwrap()
+        env.storage().instance().get(&InstanceKey::Name)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized))
     }
 
     pub fn symbol(env: Env) -> String {
-        env.storage().instance().get(&InstanceKey::Symbol).unwrap()
+        env.storage().instance().get(&InstanceKey::Symbol)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized))
     }
 
     pub fn total_supply(env: Env) -> i128 {
@@ -248,7 +252,7 @@ fn require_controller(env: &Env, caller: &Address) {
         .storage()
         .instance()
         .get(&InstanceKey::RoleStore)
-        .unwrap();
+        .unwrap_or_else(|| panic_with_error!(env, Error::NotInitialized));
     let client = RoleStoreClient::new(env, &role_store);
     let ctrl = roles::controller(env);
     if !client.has_role(caller, &ctrl) {
