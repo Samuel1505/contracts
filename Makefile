@@ -1,54 +1,42 @@
-# SO4.market — Contract Makefile
+# SO4.market contract operator entrypoint.
 #
-# Targets:
-#   make build              build all contracts to wasm
-#   make check              type-check without producing wasm
-#   make test               run the full test suite
-#   make deploy             deploy all contracts to testnet  (default)
-#   make deploy-mainnet     deploy all contracts to mainnet
-#   make clean              remove build artefacts and deployed address files
-#
-# Variables (override on the command line):
-#   NETWORK=testnet         target network (testnet | mainnet | local)
-#   SOURCE=alice            stellar key name used to sign transactions
+# The implementation lives in mx/*.mk so deployment, testing, token setup, and
+# upgrade workflows can grow without turning this file into a wall of shell.
 
-NETWORK ?= testnet
-SOURCE  ?= alice
+include mx/common.mk
+include mx/build.mk
+include mx/test.mk
+include mx/deploy.mk
+include mx/upgrade.mk
+include mx/tokens.mk
 
-.PHONY: all build check lint test deploy deploy-mainnet clean
+.PHONY: all help clean
 
-# ── Default target ─────────────────────────────────────────────────────────────
 all: build test
 
-# ── Rust ───────────────────────────────────────────────────────────────────────
-check:
-	cargo check --workspace
+help:
+	@printf '%s\n' 'SO4.market contract commands'
+	@printf '%s\n' ''
+	@printf '%s\n' 'Build and test:'
+	@printf '%s\n' '  make check'
+	@printf '%s\n' '  make lint'
+	@printf '%s\n' '  make test'
+	@printf '%s\n' '  make build'
+	@printf '%s\n' ''
+	@printf '%s\n' 'Deploy and upgrade:'
+	@printf '%s\n' '  make deploy-all NETWORK=testnet SOURCE=alice'
+	@printf '%s\n' '  make deploy-contract CONTRACT=reader NETWORK=testnet SOURCE=alice'
+	@printf '%s\n' '  make upgrade-contract CONTRACT=deposit_handler NETWORK=testnet SOURCE=alice'
+	@printf '%s\n' '  make upgrade-all NETWORK=testnet SOURCE=alice'
+	@printf '%s\n' '  make upload CONTRACT=deposit_handler NETWORK=testnet SOURCE=alice'
+	@printf '%s\n' ''
+	@printf '%s\n' 'Test assets:'
+	@printf '%s\n' '  make token-deploy CODE=TWBTC NETWORK=testnet SOURCE=alice'
+	@printf '%s\n' '  make token-mint CODE=TWBTC TO=alice AMOUNT=1000000000 NETWORK=testnet SOURCE=alice'
+	@printf '%s\n' '  make token-bootstrap CODE=TWBTC TO=alice NETWORK=testnet SOURCE=alice'
+	@printf '%s\n' ''
+	@printf '%s\n' 'Run make help-mx for the longer operator guide.'
 
-lint:
-	cargo clippy --workspace -- -D warnings
-
-test:
-	cargo test --workspace
-
-# ── Wasm build ─────────────────────────────────────────────────────────────────
-build:
-	stellar contract build
-
-# ── Deploy ─────────────────────────────────────────────────────────────────────
-# Runs scripts/deploy.sh which:
-#   1. Builds all contracts
-#   2. Uploads wasm blobs
-#   3. Deploys + initialises each contract in dependency order
-#   4. Grants CONTROLLER role to all handlers
-#   5. Prints a summary table and saves addresses to .deployed/<NETWORK>.env
-
-deploy:
-	@bash scripts/deploy.sh $(NETWORK) $(SOURCE)
-
-deploy-mainnet:
-	@$(MAKE) deploy NETWORK=mainnet SOURCE=$(SOURCE)
-
-# ── Clean ──────────────────────────────────────────────────────────────────────
 clean:
 	cargo clean
 	rm -rf .deployed

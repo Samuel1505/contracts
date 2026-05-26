@@ -359,30 +359,58 @@ A `Makefile` is provided for the most common workflows.
 | `make check` | Type-check without producing wasm (`cargo check`) |
 | `make lint` | Run Clippy with warnings as errors |
 | `make test` | Run the full Soroban sandbox test suite |
-| `make deploy` | Deploy all contracts to **testnet** (default) |
-| `make deploy-mainnet` | Deploy all contracts to **mainnet** |
+| `make deploy-all` | Deploy the full protocol graph to **testnet** (default) |
+| `make deploy-contract` | Deploy one standalone contract Wasm for debugging |
+| `make upgrade-contract` | Upload new Wasm and upgrade one existing deployed contract |
+| `make upgrade-all` | Upgrade every deployed protocol contract listed in `UPGRADE_CONTRACTS` |
+| `make deploy-mainnet` | Deploy the full protocol graph to **mainnet** |
 | `make clean` | Remove `target/` and `.deployed/` |
 
-### One-shot deploy
+### Deploy and upgrade
 
 ```bash
-# Testnet (default)
-make deploy
+# Full testnet deployment (default network)
+make deploy-all
 
 # Testnet with a different key name
-make deploy SOURCE=mykey
+make deploy-all SOURCE=mykey
 
 # Mainnet
 make deploy-mainnet SOURCE=mykey
 
 # Override both
-make deploy NETWORK=mainnet SOURCE=mykey
+make deploy-all NETWORK=mainnet SOURCE=mykey
+
+# Deploy one standalone contract Wasm for debugging
+make deploy-contract CONTRACT=reader NETWORK=testnet SOURCE=mykey
+
+# Upgrade one deployed contract in-place
+make upgrade-contract CONTRACT=deposit_handler NETWORK=testnet SOURCE=mykey
+
+# Upgrade every deployed protocol contract listed in UPGRADE_CONTRACTS
+make upgrade-all NETWORK=testnet SOURCE=mykey
 ```
 
 `SOURCE` must match a key stored in your local Stellar keystore (see [Keys & Identity](#keys--identity) above).
 
-The deploy script (`scripts/deploy.sh`) handles the full sequence automatically:
+The full deploy script (`scripts/deploy.sh`) handles the full sequence automatically:
 builds → uploads wasm blobs → deploys each contract → calls `initialize` → grants `CONTROLLER` roles → prints a summary table → saves all addresses to `.deployed/<NETWORK>.env`.
+
+If `.deployed/<NETWORK>.env` already exists, `make deploy-all` refuses to create
+a second protocol graph and prints the appropriate upgrade commands. To
+intentionally create a fresh deployment, use:
+
+```bash
+make deploy-force NETWORK=testnet SOURCE=mykey
+```
+
+`deploy-contract` is deliberately standalone: it deploys one Wasm and prints the
+new contract address, but it does not update `.deployed/<NETWORK>.env` or wire
+the contract into the current protocol deployment.
+
+Upgrade commands require the deployed contract to already expose an admin-gated
+`upgrade(env, new_wasm_hash)` function that calls
+`env.deployer().update_current_contract_wasm(new_wasm_hash)`.
 
 ### Deployed address file
 
@@ -800,6 +828,8 @@ contracts/
 ## Contributing
 
 SO4.market is being built in the open. All eight implementation phases are complete — the full protocol logic is live in Rust/Soroban. See the issue tracker for integration tests, optimisation tasks, and frontend work.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for deployment and upgrade workflow rules.
 
 ---
 

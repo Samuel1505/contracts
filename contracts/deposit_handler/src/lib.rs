@@ -136,6 +136,12 @@ impl DepositHandler {
         env.storage().instance().set(&InstanceKey::DepositVault, &deposit_vault);
     }
 
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        let admin: Address = env.storage().instance().get(&InstanceKey::Admin).unwrap();
+        admin.require_auth();
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+    }
+
     // ── Create deposit ────────────────────────────────────────────────────────
 
     /// Pull tokens from caller into the deposit_vault and record the deposit.

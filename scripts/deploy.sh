@@ -7,6 +7,9 @@
 #   NETWORK    : testnet (default) | mainnet | local
 #   SOURCE_KEY : stellar key name  (default: alice)
 #
+# Set FORCE=1 to intentionally create a fresh deployment when an address file
+# already exists for the network.
+#
 # Outputs:
 #   - Progress log to stdout
 #   - Addresses saved to .deployed/<NETWORK>.env
@@ -17,25 +20,57 @@ set -euo pipefail
 # ── Args & config ─────────────────────────────────────────────────────────────
 NETWORK="${1:-testnet}"
 SOURCE="${2:-alice}"
-WASM_DIR="target/wasm32-unknown-unknown/release"
+WASM_TARGET="${WASM_TARGET:-wasm32v1-none}"
+WASM_PROFILE="${WASM_PROFILE:-release}"
+WASM_DIR="${WASM_DIR:-target/$WASM_TARGET/$WASM_PROFILE}"
 OUT_DIR=".deployed"
 OUT_FILE="$OUT_DIR/$NETWORK.env"
+FORCE="${FORCE:-0}"
 
 # ── Colours ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 
-log()  { echo -e "${CYAN}▸${NC} $*"; }
+log()  { echo -e "${CYAN}▸${NC} $*" >&2; }
 ok()   { echo -e "  ${GREEN}✔${NC} $*"; }
-warn() { echo -e "  ${YELLOW}⚠${NC} $*"; }
-die()  { echo -e "${RED}✖ $*${NC}"; exit 1; }
+warn() { echo -e "  ${YELLOW}⚠${NC} $*" >&2; }
+die()  { echo -e "${RED}✖ $*${NC}" >&2; exit 1; }
 sep()  { echo; }
+
+print_upgrade_help() {
+  local contract="${CONTRACT:-deposit_handler}"
+  echo -e "${YELLOW}A deployment file already exists for '$NETWORK':${NC} ${CYAN}$OUT_FILE${NC}"
+  echo
+  echo "This usually means the protocol is already deployed. To change code, upgrade"
+  echo "one existing contract instead of redeploying the whole protocol graph:"
+  echo
+  echo "  make upgrade-contract CONTRACT=$contract NETWORK=$NETWORK SOURCE=$SOURCE"
+  echo
+  echo "Useful checks:"
+  echo
+  echo "  make addresses NETWORK=$NETWORK"
+  echo "  make upload CONTRACT=$contract NETWORK=$NETWORK SOURCE=$SOURCE"
+  echo "  make upgrade-with-hash CONTRACT_ID=C... WASM_HASH=... NETWORK=$NETWORK SOURCE=$SOURCE"
+  echo
+  echo "If you really want a brand-new deployment, run:"
+  echo
+  echo "  make deploy-force NETWORK=$NETWORK SOURCE=$SOURCE"
+  echo
+  echo "or:"
+  echo
+  echo "  FORCE=1 bash scripts/deploy.sh $NETWORK $SOURCE"
+}
 
 # ── Preflight checks ──────────────────────────────────────────────────────────
 command -v stellar >/dev/null 2>&1 || \
   die "stellar CLI not found. Install: cargo install stellar-cli --features opt"
 command -v cargo >/dev/null 2>&1 || \
   die "cargo not found. Install Rust from https://rustup.rs"
+
+if [[ -f "$OUT_FILE" && "$FORCE" != "1" ]]; then
+  print_upgrade_help
+  exit 2
+fi
 
 if [[ "$NETWORK" == "mainnet" ]]; then
   warn "Deploying to MAINNET. This costs real XLM."
@@ -61,6 +96,19 @@ sep
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+network_passphrase() {
+  case "$NETWORK" in
+    testnet) printf '%s' "Test SDF Network ; September 2015" ;;
+    mainnet) printf '%s' "Public Global Stellar Network ; September 2015" ;;
+    local|localnet|standalone) printf '%s' "Standalone Network ; February 2017" ;;
+    *) printf '%s' "$NETWORK" ;;
+  esac
+}
+
+network_passphrase_hex() {
+  network_passphrase | xxd -p -c 256
+}
+
 # Upload a wasm blob and return its hash.
 upload() {
   local label="$1" file="$WASM_DIR/$2"
@@ -69,8 +117,7 @@ upload() {
   stellar contract upload \
     --wasm "$file" \
     --source "$SOURCE" \
-    --network "$NETWORK" \
-    2>/dev/null
+    --network "$NETWORK"
 }
 
 # Deploy a wasm hash and return the new contract address.
@@ -80,8 +127,7 @@ deploy_contract() {
   stellar contract deploy \
     --wasm-hash "$hash" \
     --source "$SOURCE" \
-    --network "$NETWORK" \
-    2>/dev/null
+    --network "$NETWORK"
 }
 
 # Invoke a contract function (fire-and-forget, output suppressed).
@@ -91,7 +137,7 @@ invoke() {
     --id "$contract_id" \
     --source "$SOURCE" \
     --network "$NETWORK" \
-    -- "$@" >/dev/null 2>&1
+    -- "$@" >/dev/null
 }
 
 # ── Step 1: Build ─────────────────────────────────────────────────────────────
@@ -132,14 +178,15 @@ invoke "$ROLE_STORE" initialize --admin "$ADMIN"
 ok "role_store    $ROLE_STORE"
 
 DATA_STORE=$(deploy_contract "data_store" "$DATA_STORE_HASH")
-invoke "$DATA_STORE" initialize --role_store "$ROLE_STORE"
+invoke "$DATA_STORE" initialize --admin "$ADMIN" --role_store "$ROLE_STORE"
 ok "data_store    $DATA_STORE"
 
 ORACLE=$(deploy_contract "oracle" "$ORACLE_HASH")
 invoke "$ORACLE" initialize \
   --admin "$ADMIN" \
   --role_store "$ROLE_STORE" \
-  --data_store "$DATA_STORE"
+  --data_store "$DATA_STORE" \
+  --network_passphrase "$(network_passphrase_hex)"
 ok "oracle        $ORACLE"
 sep
 
@@ -150,8 +197,10 @@ MARKET_FACTORY=$(deploy_contract "market_factory" "$MARKET_FACTORY_HASH")
 invoke "$MARKET_FACTORY" initialize \
   --admin "$ADMIN" \
   --role_store "$ROLE_STORE" \
-  --data_store "$DATA_STORE" \
-  --market_token_wasm_hash "$MARKET_TOKEN_HASH"
+  --data_store "$DATA_STORE"
+invoke "$MARKET_FACTORY" set_market_token_wasm_hash \
+  --caller "$ADMIN" \
+  --wasm_hash "$MARKET_TOKEN_HASH"
 ok "market_factory  $MARKET_FACTORY"
 sep
 
@@ -261,7 +310,10 @@ for CONTRACT in \
   "$FEE_HANDLER" \
   "$EXCHANGE_ROUTER"
 do
-  invoke "$ROLE_STORE" grant_role --account "$CONTRACT" --role CONTROLLER
+  invoke "$ROLE_STORE" grant_role \
+    --caller "$ADMIN" \
+    --account "$CONTRACT" \
+    --role 33bf87be601326e21a8a7f573f265a6b8ab0174b8c8ec58239c8e524e4587b6a
   ok "CONTROLLER → $CONTRACT"
 done
 sep
