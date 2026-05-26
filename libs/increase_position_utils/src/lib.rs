@@ -11,7 +11,6 @@
 //!   7. Persist updated position.
 #![no_std]
 #![allow(dependency_on_unit_never_type_fallback)]
-#![allow(deprecated)]
 
 use soroban_sdk::{contracttype, Address, BytesN, Env};
 use gmx_types::{MarketProps, PositionProps, PriceProps};

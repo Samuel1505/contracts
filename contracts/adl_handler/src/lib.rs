@@ -5,7 +5,6 @@
 //! Delegates actual position closure to order_handler since positions live there.
 #![no_std]
 #![allow(dependency_on_unit_never_type_fallback)]
-#![allow(deprecated)]
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error,

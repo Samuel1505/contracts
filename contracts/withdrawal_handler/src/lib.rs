@@ -13,7 +13,6 @@
 //!   4. On cancel: LP tokens refunded from vault.
 #![no_std]
 #![allow(dependency_on_unit_never_type_fallback)]
-#![allow(deprecated)]
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, contracterror, panic_with_error,

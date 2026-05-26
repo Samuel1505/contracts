@@ -10,7 +10,6 @@
 //!   salt = sha256("GMX_MARKET" ‖ index_token ‖ long_token ‖ short_token ‖ market_type)
 //!   LP token address = env.deployer().with_address(factory, salt).deployed_address()
 #![no_std]
-#![allow(deprecated)]
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, contracterror, panic_with_error,

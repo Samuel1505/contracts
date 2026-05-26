@@ -6,7 +6,6 @@
 //! stored in order_handler's persistent storage.
 #![no_std]
 #![allow(dependency_on_unit_never_type_fallback)]
-#![allow(deprecated)]
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error,
@@ -39,6 +38,7 @@ enum InstanceKey {
 #[repr(u32)]
 pub enum Error {
     AlreadyInitialized  = 1,
+    NotInitialized      = 2,
     Unauthorized        = 3,
     NotLiquidatable     = 5,
 }
@@ -113,9 +113,12 @@ impl LiquidationHandler {
         collateral_token: Address,
         is_long: bool,
     ) -> bool {
-        let data_store: Address = env.storage().instance().get(&InstanceKey::DataStore).unwrap();
-        let oracle: Address = env.storage().instance().get(&InstanceKey::Oracle).unwrap();
-        let order_handler: Address = env.storage().instance().get(&InstanceKey::OrderHandler).unwrap();
+        let data_store: Address = env.storage().instance().get(&InstanceKey::DataStore)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        let oracle: Address = env.storage().instance().get(&InstanceKey::Oracle)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        let order_handler: Address = env.storage().instance().get(&InstanceKey::OrderHandler)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
 
         let market_props = load_market_props(&env, &data_store, &market);
         let oracle_client = OracleClient::new(&env, &oracle);
@@ -145,14 +148,18 @@ impl LiquidationHandler {
     ) {
         keeper.require_auth();
 
-        let role_store: Address = env.storage().instance().get(&InstanceKey::RoleStore).unwrap();
+        let role_store: Address = env.storage().instance().get(&InstanceKey::RoleStore)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         if !RoleStoreClient::new(&env, &role_store).has_role(&keeper, &roles::liquidation_keeper(&env)) {
             panic_with_error!(&env, Error::Unauthorized);
         }
 
-        let data_store: Address = env.storage().instance().get(&InstanceKey::DataStore).unwrap();
-        let oracle: Address = env.storage().instance().get(&InstanceKey::Oracle).unwrap();
-        let order_handler: Address = env.storage().instance().get(&InstanceKey::OrderHandler).unwrap();
+        let data_store: Address = env.storage().instance().get(&InstanceKey::DataStore)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        let oracle: Address = env.storage().instance().get(&InstanceKey::Oracle)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        let order_handler: Address = env.storage().instance().get(&InstanceKey::OrderHandler)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
 
         let market_props = load_market_props(&env, &data_store, &market);
         let oracle_client = OracleClient::new(&env, &oracle);

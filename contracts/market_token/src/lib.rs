@@ -4,7 +4,6 @@
 //! by `market_factory`. Mint and burn are gated to CONTROLLER role (held by
 //! deposit_handler / withdrawal_handler). All other SEP-41 methods are public.
 #![no_std]
-#![allow(deprecated)]
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, contracterror, panic_with_error,

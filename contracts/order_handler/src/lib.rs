@@ -15,7 +15,6 @@
 //!   freeze_order  → mark order as frozen (keeper-side circuit breaker)
 #![no_std]
 #![allow(dependency_on_unit_never_type_fallback)]
-#![allow(deprecated)]
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, Address, BytesN, Env,
@@ -547,11 +546,11 @@ fn load_market_props(env: &Env, data_store: &Address, market_token: &Address) ->
         .expect("market long token not found");
     let short_token = ds.get_address(&market_short_token_key(env, market_token))
         .expect("market short token not found");
-    MarketProps {
-        market_token: market_token.clone(),
-        index_token,
-        long_token,
-        short_token,
+    MarketProps { 
+        market_token: market_token.clone(), 
+        index_token, 
+        long_token, 
+        short_token 
     }
 }
 
