@@ -117,10 +117,10 @@ pub fn increase_position(env: &Env, p: &IncreasePositionParams) -> PositionProps
     let execution_price = get_execution_price(env, index_price, p.size_delta_usd, impact_usd, p.is_long, true);
     if p.acceptable_price != 0 {
         if p.is_long && execution_price > p.acceptable_price {
-            panic!("execution price too high for long");
+            soroban_sdk::panic_with_error!(env, soroban_sdk::contracterror::Error::from_u32(1));
         }
         if !p.is_long && execution_price < p.acceptable_price {
-            panic!("execution price too low for short");
+            soroban_sdk::panic_with_error!(env, soroban_sdk::contracterror::Error::from_u32(2));
         }
     }
 
@@ -141,7 +141,7 @@ pub fn increase_position(env: &Env, p: &IncreasePositionParams) -> PositionProps
     // 8. Update collateral: add deposited, subtract fees
     position.collateral_amount += p.collateral_amount - fees.total_cost_amount;
     if position.collateral_amount < 0 {
-        panic!("insufficient collateral for fees");
+        soroban_sdk::panic_with_error!(env, soroban_sdk::contracterror::Error::from_u32(3));
     }
 
     // 9. Update position size and funding/borrowing trackers
