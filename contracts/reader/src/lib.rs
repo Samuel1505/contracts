@@ -52,11 +52,11 @@ impl Reader {
     pub fn get_market(env: Env, data_store: Address, market_token: Address) -> MarketProps {
         let ds = DataStoreClient::new(&env, &data_store);
         let index_token = ds.get_address(&market_index_token_key(&env, &market_token))
-            .unwrap_or_else(|| panic!("market index token not found"));
+            .expect("market index token not found");
         let long_token = ds.get_address(&market_long_token_key(&env, &market_token))
-            .unwrap_or_else(|| panic!("market long token not found"));
+            .expect("market long token not found");
         let short_token = ds.get_address(&market_short_token_key(&env, &market_token))
-            .unwrap_or_else(|| panic!("market short token not found"));
+            .expect("market short token not found");
         MarketProps { market_token, index_token, long_token, short_token }
     }
 

@@ -59,7 +59,7 @@ pub fn swap(
     } else if token_in == &market.short_token {
         market.long_token.clone()
     } else {
-        panic!("token_in not in market")
+        soroban_sdk::panic_with_error!(env, soroban_sdk::contracterror::Error::from_u32(1));
     };
 
     // 2. Read prices from oracle
@@ -123,7 +123,7 @@ pub fn swap_with_path(
         if raw == 0 { 3 } else { raw } // default to 3 if not configured
     };
     if path.len() as usize > max_len {
-        panic!("swap path too long");
+        soroban_sdk::panic_with_error!(env, soroban_sdk::contracterror::Error::from_u32(2));
     }
 
     // 2. Walk the path
@@ -137,11 +137,11 @@ pub fn swap_with_path(
         // Load market props from data_store
         let ds = DataStoreClient::new(env, data_store);
         let index_token = ds.get_address(&market_index_token_key(env, &market_token_addr))
-            .unwrap_or_else(|| panic!("market index token not found"));
+            .expect("market index token not found");
         let long_token  = ds.get_address(&market_long_token_key(env, &market_token_addr))
-            .unwrap_or_else(|| panic!("market long token not found"));
+            .expect("market long token not found");
         let short_token = ds.get_address(&market_short_token_key(env, &market_token_addr))
-            .unwrap_or_else(|| panic!("market short token not found"));
+            .expect("market short token not found");
 
         let market_props = MarketProps {
             market_token: market_token_addr.clone(),

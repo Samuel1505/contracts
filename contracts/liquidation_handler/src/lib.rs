@@ -163,7 +163,7 @@ impl LiquidationHandler {
         let pk = position_key(&env, &account, &market, &collateral_token, is_long);
         let position: PositionProps = match OrderHandlerClient::new(&env, &order_handler).get_position(&pk) {
             Some(p) => p,
-            None => panic!("position not found"),
+            None => panic_with_error!(&env, Error::NotLiquidatable),
         };
 
         if !is_liquidatable(&env, &data_store, &position, &market_props, collateral_price, &index_price) {
@@ -186,10 +186,10 @@ impl LiquidationHandler {
 fn load_market_props(env: &Env, data_store: &Address, market_token: &Address) -> MarketProps {
     let ds = DataStoreClient::new(env, data_store);
     let index_token = ds.get_address(&market_index_token_key(env, market_token))
-        .unwrap_or_else(|| panic!("market index token not found"));
+        .expect("market index token not found");
     let long_token = ds.get_address(&market_long_token_key(env, market_token))
-        .unwrap_or_else(|| panic!("market long token not found"));
+        .expect("market long token not found");
     let short_token = ds.get_address(&market_short_token_key(env, market_token))
-        .unwrap_or_else(|| panic!("market short token not found"));
+        .expect("market short token not found");
     MarketProps { market_token: market_token.clone(), index_token, long_token, short_token }
 }

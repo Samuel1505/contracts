@@ -247,7 +247,7 @@ impl OrderHandler {
             OrderType::MarketSwap | OrderType::LimitSwap => {
                 // Transfer collateral from vault to first market in path
                 let first_market = order.swap_path.get(0)
-                    .unwrap_or_else(|| panic!("empty swap path"));
+                    .unwrap_or_else(|| panic_with_error!(&env, Error::InvalidOrderType));
                 OrderVaultClient::new(&env, &order_vault).transfer_out(
                     &handler,
                     &order.initial_collateral_token,
@@ -262,7 +262,7 @@ impl OrderHandler {
                     &order.receiver,
                 );
                 if amount_out < order.min_output_amount {
-                    panic!("min output not met");
+                    panic_with_error!(&env, Error::PriceTooLow);
                 }
             }
 
@@ -442,13 +442,13 @@ impl OrderHandler {
         let pk = position_key(&env, &account, &market, &collateral_token, is_long);
         let position: PositionProps = env.storage().persistent()
             .get(&PositionStorageKey::Position(pk.clone()))
-            .unwrap_or_else(|| panic!("position not found"));
+            .unwrap_or_else(|| panic_with_error!(&env, Error::OrderNotFound));
 
         // Validate liquidatability
         if !gmx_position_utils::is_liquidatable(
             &env, &data_store, &position, &market_props, collateral_price, &index_price,
         ) {
-            panic!("position not liquidatable");
+            panic_with_error!(&env, Error::InvalidOrderType);
         }
 
         let result = decrease_position(&env, &DecreasePositionParams {
@@ -542,11 +542,11 @@ fn require_adl_keeper(env: &Env, caller: &Address) {
 fn load_market_props(env: &Env, data_store: &Address, market_token: &Address) -> MarketProps {
     let ds = DataStoreClient::new(env, data_store);
     let index_token = ds.get_address(&market_index_token_key(env, market_token))
-        .unwrap_or_else(|| panic!("market index token not found"));
+        .expect("market index token not found");
     let long_token = ds.get_address(&market_long_token_key(env, market_token))
-        .unwrap_or_else(|| panic!("market long token not found"));
+        .expect("market long token not found");
     let short_token = ds.get_address(&market_short_token_key(env, market_token))
-        .unwrap_or_else(|| panic!("market short token not found"));
+        .expect("market short token not found");
     MarketProps {
         market_token: market_token.clone(),
         index_token,

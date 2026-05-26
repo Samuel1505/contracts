@@ -87,7 +87,7 @@ pub fn decrease_position(env: &Env, p: &DecreasePositionParams) -> DecreasePosit
     // 1. Load position
     let mut position: PositionProps = env.storage().persistent()
         .get(&storage_key)
-        .unwrap_or_else(|| panic!("position not found"));
+        .expect("position not found");
 
     // Clamp size_delta to full close if needed
     let size_delta_usd = p.size_delta_usd.min(position.size_in_usd);
@@ -112,10 +112,10 @@ pub fn decrease_position(env: &Env, p: &DecreasePositionParams) -> DecreasePosit
     let execution_price = get_execution_price(env, index_price_mid, size_delta_usd, impact_usd, p.is_long, false);
     if p.acceptable_price != 0 {
         if p.is_long  && execution_price < p.acceptable_price {
-            panic!("execution price too low for long decrease");
+            soroban_sdk::panic_with_error!(env, soroban_sdk::contracterror::Error::from_u32(1));
         }
         if !p.is_long && execution_price > p.acceptable_price {
-            panic!("execution price too high for short decrease");
+            soroban_sdk::panic_with_error!(env, soroban_sdk::contracterror::Error::from_u32(2));
         }
     }
 

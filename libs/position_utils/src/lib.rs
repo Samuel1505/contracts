@@ -193,7 +193,7 @@ pub fn validate_position(
     if min_collateral_factor > 0 {
         let required_min = mul_div_wide(env, position.size_in_usd, min_collateral_factor, FLOAT_PRECISION);
         if collateral_usd < required_min {
-            panic!("min collateral violated");
+            soroban_sdk::panic_with_error!(env, soroban_sdk::contracterror::Error::from_u32(1));
         }
     }
 
@@ -203,13 +203,13 @@ pub fn validate_position(
     if max_leverage > 0 && collateral_usd > 0 {
         let effective_leverage = mul_div_wide(env, position.size_in_usd, FLOAT_PRECISION, collateral_usd);
         if effective_leverage > max_leverage {
-            panic!("max leverage exceeded");
+            soroban_sdk::panic_with_error!(env, soroban_sdk::contracterror::Error::from_u32(2));
         }
     }
 
     // 3. OPEN INTEREST check
     if validate_open_interest(env, data_store, market, position.is_long).is_err() {
-        panic!("max open interest exceeded");
+        soroban_sdk::panic_with_error!(env, soroban_sdk::contracterror::Error::from_u32(3));
     }
 }
 
