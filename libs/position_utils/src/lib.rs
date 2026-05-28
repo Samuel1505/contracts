@@ -268,3 +268,198 @@ pub fn get_position_key(
 ) -> BytesN<32> {
     position_key(env, account, market_token, collateral_token, is_long)
 }
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Env};
+    use role_store::{RoleStore, RoleStoreClient as RsClient};
+    use data_store::{DataStore, DataStoreClient as DsClient};
+    use gmx_keys::roles;
+    use gmx_types::{MarketProps, PositionProps, PriceProps};
+    use gmx_math::{FLOAT_PRECISION, TOKEN_PRECISION};
+
+    const ONE_TOKEN: i128 = 10_000_000;
+    const FP: i128 = FLOAT_PRECISION;
+
+    struct World {
+        env:       Env,
+        admin:     Address,
+        ds:        Address,
+        market_tk: Address,
+        long_tk:   Address,
+        short_tk:  Address,
+        index_tk:  Address,
+    }
+
+    fn setup() -> World {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+
+        let rs = env.register(RoleStore, ());
+        RsClient::new(&env, &rs).initialize(&admin);
+        RsClient::new(&env, &rs).grant_role(&admin, &admin, &roles::controller(&env));
+
+        let ds = env.register(DataStore, ());
+        DsClient::new(&env, &ds).initialize(&admin, &rs);
+
+        let market_tk = Address::generate(&env);
+        let long_tk   = Address::generate(&env);
+        let short_tk  = Address::generate(&env);
+        let index_tk  = Address::generate(&env);
+
+        let ds_c = DsClient::new(&env, &ds);
+        ds_c.set_address(&admin, &gmx_keys::market_index_token_key(&env, &market_tk), &index_tk);
+        ds_c.set_address(&admin, &gmx_keys::market_long_token_key(&env, &market_tk),  &long_tk);
+        ds_c.set_address(&admin, &gmx_keys::market_short_token_key(&env, &market_tk), &short_tk);
+
+        World { env, admin, ds, market_tk, long_tk, short_tk, index_tk }
+    }
+
+    fn make_market(w: &World) -> MarketProps {
+        MarketProps {
+            market_token: w.market_tk.clone(),
+            index_token:  w.index_tk.clone(),
+            long_token:   w.long_tk.clone(),
+            short_token:  w.short_tk.clone(),
+        }
+    }
+
+    fn make_position(w: &World, size_usd: i128, collateral: i128, index_price: i128) -> PositionProps {
+        let size_in_tokens = gmx_math::mul_div_wide(&w.env, size_usd, TOKEN_PRECISION, index_price);
+        PositionProps {
+            account:                     w.admin.clone(),
+            market:                      w.market_tk.clone(),
+            collateral_token:            w.long_tk.clone(),
+            size_in_usd:                 size_usd,
+            size_in_tokens,
+            collateral_amount:           collateral,
+            pending_impact_amount:       0,
+            borrowing_factor:            0,
+            funding_fee_amount_per_size: 0,
+            long_claim_fnd_per_size:     0,
+            short_claim_fnd_per_size:    0,
+            increased_at_time:           1_000,
+            decreased_at_time:           0,
+            is_long:                     true,
+        }
+    }
+
+    // ── Task 1: get_position_fees ─────────────────────────────────────────────
+
+    /// With zero fee factors configured, all fee components are zero.
+    #[test]
+    fn position_fees_are_zero_when_factors_unset() {
+        let w = setup();
+        let market   = make_market(&w);
+        let position = make_position(&w, 1_000 * FP, ONE_TOKEN * 10, 2_000 * FP);
+
+        let fees = get_position_fees(
+            &w.env, &w.ds, &market, &position,
+            2_000 * FP, 1_000 * FP, true,
+        );
+
+        assert_eq!(fees.borrowing_fee_amount, 0, "borrowing fee must be 0 with no factor");
+        assert_eq!(fees.funding_fee_amount,   0, "funding fee must be 0 with no delta");
+        assert_eq!(fees.position_fee_amount,  0, "position fee must be 0 with no factor");
+        assert_eq!(fees.total_cost_amount,    0);
+    }
+
+    /// Position fee matches the expected bps formula.
+    #[test]
+    fn position_fee_matches_bps_formula() {
+        let w = setup();
+        let fee_bps: i128 = 30; // 30 bps
+        let fee_factor = fee_bps * FP / 10_000;
+        let ds_c = DsClient::new(&w.env, &w.ds);
+        ds_c.set_u128(&w.admin, &gmx_keys::position_fee_factor_key(&w.env, &w.market_tk, true),  &(fee_factor as u128));
+
+        let market       = make_market(&w);
+        let index_price  = 2_000 * FP;
+        let size_delta   = 1_000 * FP;
+        let position     = make_position(&w, size_delta, ONE_TOKEN * 10, index_price);
+
+        let fees = get_position_fees(
+            &w.env, &w.ds, &market, &position,
+            index_price, size_delta, true,
+        );
+
+        let fee_usd          = gmx_math::mul_div_wide(&w.env, size_delta, fee_factor, FP);
+        let expected_fee_tok = gmx_math::mul_div_wide(&w.env, fee_usd, TOKEN_PRECISION, index_price);
+
+        assert!(fees.position_fee_amount > 0,   "position fee must be non-zero");
+        assert_eq!(fees.position_fee_amount, expected_fee_tok, "position fee must match formula");
+    }
+
+    /// Borrowing fee is proportional to the cumulative factor delta and position size in tokens.
+    #[test]
+    fn borrowing_fee_proportional_to_cum_factor_delta() {
+        let w = setup();
+        let ds_c = DsClient::new(&w.env, &w.ds);
+
+        // Seed a cumulative borrowing factor > position snapshot (0)
+        let cum_factor: i128 = FP / 1_000; // small factor
+        ds_c.set_u128(&w.admin, &gmx_keys::cumulative_borrowing_factor_key(&w.env, &w.market_tk, true),
+            &(cum_factor as u128));
+
+        let market   = make_market(&w);
+        let position = make_position(&w, 1_000 * FP, ONE_TOKEN * 10, 2_000 * FP);
+        // position.borrowing_factor = 0, cum = cum_factor → delta = cum_factor
+
+        let fees = get_position_fees(
+            &w.env, &w.ds, &market, &position,
+            2_000 * FP, 1_000 * FP, true,
+        );
+
+        let expected = gmx_math::mul_div_wide(&w.env, cum_factor, position.size_in_tokens, FP);
+        assert_eq!(fees.borrowing_fee_amount, expected, "borrowing fee must match formula");
+    }
+
+    // ── Task 1: settle_funding_fees ───────────────────────────────────────────
+
+    /// settle_funding_fees credits claimable amount when position is owed funding.
+    #[test]
+    fn settle_funding_credits_claimable_when_owed() {
+        let w = setup();
+        let ds_c = DsClient::new(&w.env, &w.ds);
+
+        // Set global funding-per-size to negative: position (tracker=0) is owed funding
+        let fnd_key = gmx_keys::funding_amount_per_size_key(&w.env, &w.market_tk, &w.long_tk, true);
+        let funding_per_size: i128 = -(FP / 100_000); // small negative
+        ds_c.apply_delta_to_i128(&w.admin, &fnd_key, &funding_per_size);
+
+        let market   = make_market(&w);
+        let mut pos  = make_position(&w, 1_000 * FP, ONE_TOKEN * 10, 2_000 * FP);
+        // pos.long_claim_fnd_per_size = 0 > funding_per_size → claimable
+
+        settle_funding_fees(&w.env, &w.ds, &w.admin, &market, &mut pos);
+
+        let claim_key = gmx_keys::claimable_funding_amount_key(&w.env, &w.market_tk, &w.long_tk, &w.admin);
+        let claimable = ds_c.get_u128(&claim_key);
+        assert!(claimable > 0, "claimable funding must be credited when position is owed funding");
+    }
+
+    /// After settle_funding_fees, the position's tracker is updated to the current global value.
+    #[test]
+    fn settle_funding_resets_tracker_to_current_global() {
+        let w = setup();
+        let ds_c = DsClient::new(&w.env, &w.ds);
+
+        let fnd_key      = gmx_keys::funding_amount_per_size_key(&w.env, &w.market_tk, &w.long_tk, true);
+        let global_value: i128 = FP / 50_000;
+        ds_c.apply_delta_to_i128(&w.admin, &fnd_key, &global_value);
+
+        let market   = make_market(&w);
+        let mut pos  = make_position(&w, 1_000 * FP, ONE_TOKEN * 10, 2_000 * FP);
+
+        settle_funding_fees(&w.env, &w.ds, &w.admin, &market, &mut pos);
+
+        // After settlement the position's funding_fee_amount_per_size must equal the global
+        assert_eq!(pos.funding_fee_amount_per_size, global_value,
+            "position tracker must be reset to current global after settlement");
+    }
+}

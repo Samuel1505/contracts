@@ -163,3 +163,166 @@ impl FeeHandler {
         amount
     }
 }
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Env};
+    use role_store::{RoleStore, RoleStoreClient as RsClient};
+    use data_store::{DataStore, DataStoreClient as DsClient};
+    use market_token::{MarketToken, MarketTokenClient as MtClient};
+    use gmx_keys::roles;
+
+    const ONE_TOKEN: i128 = 10_000_000;
+
+    struct World {
+        env:       Env,
+        admin:     Address,
+        keeper:    Address,
+        rs:        Address,
+        ds:        Address,
+        market_tk: Address,
+        long_tk:   Address,
+        handler:   Address,
+    }
+
+    fn setup() -> World {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin  = Address::generate(&env);
+        let keeper = Address::generate(&env);
+
+        let rs = env.register(RoleStore, ());
+        let rs_c = RsClient::new(&env, &rs);
+        rs_c.initialize(&admin);
+        rs_c.grant_role(&admin, &admin,  &roles::controller(&env));
+        rs_c.grant_role(&admin, &keeper, &roles::fee_keeper(&env));
+
+        let ds = env.register(DataStore, ());
+        DsClient::new(&env, &ds).initialize(&admin, &rs);
+
+        let market_tk = env.register(MarketToken, ());
+        MtClient::new(&env, &market_tk).initialize(
+            &admin, &rs, &7u32,
+            &soroban_sdk::String::from_str(&env, "FH Test Market"),
+            &soroban_sdk::String::from_str(&env, "FM"),
+        );
+        rs_c.grant_role(&admin, &market_tk, &roles::controller(&env));
+
+        let long_tk = env.register_stellar_asset_contract_v2(admin.clone()).address();
+
+        let handler = env.register(FeeHandler, ());
+        FeeHandlerClient::new(&env, &handler)
+            .initialize(&admin, &rs, &ds);
+        rs_c.grant_role(&admin, &handler, &roles::controller(&env));
+
+        World { env, admin, keeper, rs, ds, market_tk, long_tk, handler }
+    }
+
+    // ── Task 1: fee_handler tests ─────────────────────────────────────────────
+
+    /// claimable_fees returns zero on a fresh DataStore.
+    #[test]
+    fn claimable_fees_zero_initially() {
+        let w = setup();
+        let amount = FeeHandlerClient::new(&w.env, &w.handler)
+            .claimable_fees(&w.market_tk, &w.long_tk);
+        assert_eq!(amount, 0, "claimable fees must be zero before any accumulation");
+    }
+
+    /// claim_fees transfers accumulated protocol fees and zeroes the DataStore entry.
+    #[test]
+    fn claim_fees_transfers_and_zeroes_balance() {
+        let w = setup();
+        let fee_amount: u128 = ONE_TOKEN as u128 * 3; // 3 tokens
+
+        // Seed claimable fee amount in DataStore
+        let fee_key = gmx_keys::claimable_fee_amount_key(&w.env, &w.market_tk, &w.long_tk);
+        DsClient::new(&w.env, &w.ds)
+            .set_u128(&w.admin, &fee_key, &fee_amount);
+
+        // Mint tokens into the market pool so withdraw_from_pool can transfer
+        StellarAssetClient::new(&w.env, &w.long_tk)
+            .mint(&w.market_tk, &(fee_amount as i128));
+
+        let receiver = Address::generate(&w.env);
+        let bal_before = soroban_sdk::token::Client::new(&w.env, &w.long_tk).balance(&receiver);
+
+        FeeHandlerClient::new(&w.env, &w.handler)
+            .claim_fees(&w.keeper, &w.market_tk, &w.long_tk, &receiver);
+
+        let bal_after = soroban_sdk::token::Client::new(&w.env, &w.long_tk).balance(&receiver);
+        assert_eq!((bal_after - bal_before) as u128, fee_amount,
+            "receiver must get exactly the claimable fee amount");
+
+        // DataStore entry must be zeroed after claim
+        let remaining = DsClient::new(&w.env, &w.ds).get_u128(&fee_key);
+        assert_eq!(remaining, 0, "claimable fee in DataStore must be zero after claim");
+    }
+
+    /// claim_fees panics with NothingToClaim when there is no accumulated fee.
+    #[test]
+    #[should_panic]
+    fn claim_fees_nothing_to_claim_reverts() {
+        let w = setup();
+        let receiver = Address::generate(&w.env);
+        FeeHandlerClient::new(&w.env, &w.handler)
+            .claim_fees(&w.keeper, &w.market_tk, &w.long_tk, &receiver);
+    }
+
+    /// Non-keeper cannot call claim_fees — Unauthorized expected.
+    #[test]
+    #[should_panic]
+    fn claim_fees_by_non_keeper_reverts() {
+        let w = setup();
+        // Seed some fees so the call reaches the role check
+        let fee_key = gmx_keys::claimable_fee_amount_key(&w.env, &w.market_tk, &w.long_tk);
+        DsClient::new(&w.env, &w.ds).set_u128(&w.admin, &fee_key, &(ONE_TOKEN as u128));
+        StellarAssetClient::new(&w.env, &w.long_tk).mint(&w.market_tk, &ONE_TOKEN);
+
+        let intruder = Address::generate(&w.env);
+        let receiver = Address::generate(&w.env);
+        FeeHandlerClient::new(&w.env, &w.handler)
+            .claim_fees(&intruder, &w.market_tk, &w.long_tk, &receiver);
+    }
+
+    /// claim_funding_fees transfers the claimable amount to the account and zeroes the entry.
+    #[test]
+    fn claim_funding_fees_transfers_and_zeroes_balance() {
+        let w = setup();
+        let funding_amount: u128 = ONE_TOKEN as u128 * 2;
+
+        let claim_key = gmx_keys::claimable_funding_amount_key(
+            &w.env, &w.market_tk, &w.long_tk, &w.admin,
+        );
+        DsClient::new(&w.env, &w.ds)
+            .set_u128(&w.admin, &claim_key, &funding_amount);
+
+        StellarAssetClient::new(&w.env, &w.long_tk)
+            .mint(&w.market_tk, &(funding_amount as i128));
+
+        let bal_before = soroban_sdk::token::Client::new(&w.env, &w.long_tk).balance(&w.admin);
+
+        FeeHandlerClient::new(&w.env, &w.handler)
+            .claim_funding_fees(&w.admin, &w.market_tk, &w.long_tk);
+
+        let bal_after = soroban_sdk::token::Client::new(&w.env, &w.long_tk).balance(&w.admin);
+        assert_eq!((bal_after - bal_before) as u128, funding_amount,
+            "account must receive the full claimable funding amount");
+
+        let remaining = DsClient::new(&w.env, &w.ds).get_u128(&claim_key);
+        assert_eq!(remaining, 0, "claimable funding must be zero after claim");
+    }
+
+    /// claim_funding_fees returns 0 (no transfer) when there is nothing to claim.
+    #[test]
+    fn claim_funding_fees_returns_zero_when_nothing_to_claim() {
+        let w = setup();
+        let claimed = FeeHandlerClient::new(&w.env, &w.handler)
+            .claim_funding_fees(&w.admin, &w.market_tk, &w.long_tk);
+        assert_eq!(claimed, 0, "claim_funding_fees must return 0 when nothing is claimable");
+    }
+}
