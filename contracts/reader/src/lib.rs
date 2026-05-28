@@ -18,7 +18,7 @@ use gmx_math::{TOKEN_PRECISION, mul_div_wide};
 use gmx_keys::{
     market_index_token_key, market_long_token_key, market_short_token_key,
     funding_amount_per_size_key, saved_funding_factor_per_second_key,
-    order_list_key, account_order_list_key,
+    order_list_key, account_order_list_key, position_key,
 };
 use gmx_market_utils::{get_pool_value, get_open_interest_for_side};
 use gmx_position_utils::{get_position_pnl_usd, get_position_fees, is_liquidatable};
@@ -40,6 +40,12 @@ trait IDataStore {
 #[soroban_sdk::contractclient(name = "OracleClient")]
 trait IOracle {
     fn get_primary_price(env: Env, token: Address) -> PriceProps;
+}
+
+#[allow(dead_code)]
+#[soroban_sdk::contractclient(name = "OrderHandlerClient")]
+trait IOrderHandler {
+    fn get_position(env: Env, key: BytesN<32>) -> Option<PositionProps>;
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
@@ -123,18 +129,29 @@ impl Reader {
 
     /// Get a single position enriched with PnL, fees, and liquidation price.
     ///
-    /// `position` must be supplied by caller (loaded from order_handler storage
-    /// via cross-contract, or passed directly from the frontend's cached data).
+    /// Reads position from the canonical location (order_handler storage) via cross-contract call.
+    /// This ensures all consumers (liquidation_handler, adl_handler, reader) agree on position state.
     pub fn get_position_info(
         env: Env,
         data_store: Address,
         oracle: Address,
-        position: PositionProps,
-    ) -> PositionInfo {
-        let market = Self::get_market(env.clone(), data_store.clone(), position.market.clone());
+        order_handler: Address,
+        account: Address,
+        market: Address,
+        collateral_token: Address,
+        is_long: bool,
+    ) -> Option<PositionInfo> {
+        // Read position from canonical location (order_handler storage)
+        let pk = position_key(&env, &account, &market, &collateral_token, is_long);
+        let position: PositionProps = match OrderHandlerClient::new(&env, &order_handler).get_position(&pk) {
+            Some(p) => p,
+            None => return None,
+        };
+
+        let market_props = Self::get_market(env.clone(), data_store.clone(), position.market.clone());
         let oracle_client = OracleClient::new(&env, &oracle);
 
-        let index_price      = oracle_client.get_primary_price(&market.index_token);
+        let index_price      = oracle_client.get_primary_price(&market_props.index_token);
         let collateral_price = oracle_client.get_primary_price(&position.collateral_token).mid_price();
 
         // PnL for the full position size
@@ -144,7 +161,7 @@ impl Reader {
 
         // Fees in collateral token units
         let fees: PositionFees = get_position_fees(
-            &env, &data_store, &market, &position,
+            &env, &data_store, &market_props, &position,
             collateral_price, position.size_in_usd, false,
         );
 
@@ -174,7 +191,7 @@ impl Reader {
             0
         };
 
-        PositionInfo {
+        Some(PositionInfo {
             position,
             pnl_usd,
             uncapped_pnl_usd,
@@ -182,7 +199,7 @@ impl Reader {
             funding_fee_usd,
             position_fee_usd,
             liquidation_price,
-        }
+        })
     }
 
     /// Compute the execution price a user would get for a given size and order direction.
@@ -209,17 +226,30 @@ impl Reader {
     }
 
     /// Return whether a position is currently liquidatable at oracle prices.
+    ///
+    /// Reads position from the canonical location (order_handler storage) via cross-contract call.
     pub fn is_position_liquidatable(
         env: Env,
         data_store: Address,
         oracle: Address,
-        position: PositionProps,
+        order_handler: Address,
+        account: Address,
+        market: Address,
+        collateral_token: Address,
+        is_long: bool,
     ) -> bool {
-        let market = Self::get_market(env.clone(), data_store.clone(), position.market.clone());
+        // Read position from canonical location (order_handler storage)
+        let pk = position_key(&env, &account, &market, &collateral_token, is_long);
+        let position: PositionProps = match OrderHandlerClient::new(&env, &order_handler).get_position(&pk) {
+            Some(p) => p,
+            None => return false,
+        };
+
+        let market_props = Self::get_market(env.clone(), data_store.clone(), position.market.clone());
         let oracle_client = OracleClient::new(&env, &oracle);
-        let index_price      = oracle_client.get_primary_price(&market.index_token);
+        let index_price      = oracle_client.get_primary_price(&market_props.index_token);
         let collateral_price = oracle_client.get_primary_price(&position.collateral_token).mid_price();
-        is_liquidatable(&env, &data_store, &position, &market, collateral_price, &index_price)
+        is_liquidatable(&env, &data_store, &position, &market_props, collateral_price, &index_price)
     }
 
     // ── Order list views (issue #29) ─────────────────────────────────────────
